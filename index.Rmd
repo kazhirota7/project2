@@ -46,92 +46,213 @@ class_diag <- function(score, truth, positive, cutoff=.5){
 
 # Mining, Classification, Prediction
 
-## Name and EID here
+## Kazuma Hirota kh37775
 
 ### Introduction 
 
-Paragraph or two introducing your datasets and variables, why they are interesting to you, etc. See instructions for more information
+    In this project I will be using a "Room Occupancy" dataset found in Kaggle. This dataset records the temperature, humidity, light, CO2, humidity ratio in a room, and whether the room is occupied or not (1 if occupied, 0 if not occupied). This dataset is interesting and is well suited for machine learning applications because the data is made for binary classification. There are 6 total variables and 2665 total rows. The temperature, humidity, light, CO2, and humidity ratio are all recorded as a double. Out of the 2665 observations, 1693 are for unoccupied, and 972 are for occupied.
 
 ```{R}
 library(tidyverse)
 # read your datasets in here, e.g., with read_csv()
+occupancy = read_csv("file.csv")
+glimpse(occupancy)
+occupancy %>% count(Occupancy)
 
-# if your dataset needs tidying, do so here
-
-# any other code here
 ```
 
 ### Cluster Analysis
 
 ```{R}
 library(cluster)
-# clustering code here
+library(GGally)
+pam_dat<-occupancy
+sil_width<-vector()
+for(i in 2:10){  
+  pam_fit <- pam(pam_dat, k = i)  
+  sil_width[i] <- pam_fit$silinfo$avg.width  
+}
+ggplot()+geom_line(aes(x=1:10,y=sil_width))+scale_x_continuous(name="k",breaks=1:10)
+
+pam1 <- occupancy %>% pam(k=2)
+plot(pam1, which=2)
+
+occupancy %>% mutate(cluster=as.factor(pam1$clustering)) %>% 
+  ggpairs(aes(color=cluster))
+
 ```
 
-Discussion of clustering here
+  I performed PAM clustering on each of the variables in the dataset. To find the best number of clusters, the silhouette width was calculated for k values ranging from 2 to 10. The silhouette width when k = 2 produces the greatest silhouette width, so the value of 2 was chosen for k. The silhouette width when k = 2 is 0.71, which means that there is a strong structure for this cluster.
+  The greatest correlation was found between CO2 and humidity, which could be because CO2 and humidity both increases when a person is in the room and breathing out moisture and CO2. The greatest negative correlation was found between light and humidity. However, most of the variables seem to have a positive relationship, looking at the graphs and the correlation values.
     
     
 ### Dimensionality Reduction with PCA
 
 ```{R}
-# PCA code here
+occu_pca <- princomp(occupancy, cor=T)
+summary(occu_pca, loadings=T)
+eigval <- occu_pca$sdev^2
+varprop <- round(eigval/sum(eigval), 2)
+
+ggplot() + geom_bar(aes(y=varprop, x=1:6), stat="identity") + xlab("") + geom_path(aes(y=varprop, x=1:6)) + 
+  geom_text(aes(x=1:6, y=varprop, label=round(varprop, 2)), vjust=1, col="white", size=5) + 
+  scale_y_continuous(breaks=seq(0, .6, .2), labels = scales::percent) + 
+  scale_x_continuous(breaks=1:10)
+
+occupancy %>% mutate(PC1=occu_pca$scores[, 1], PC2=occu_pca$scores[, 2]) %>% 
+  ggplot(aes(PC1, PC2, color=Occupancy)) + geom_point() + coord_fixed()
+occupancy %>% mutate(PC3=occu_pca$scores[, 3], PC4=occu_pca$scores[, 4]) %>% 
+  ggplot(aes(PC3, PC4, color=Occupancy)) + geom_point() + coord_fixed()
+
+occu_pca$loadings[1:6, 1:2] %>% as.data.frame %>% rownames_to_column %>% 
+ggplot() + geom_hline(aes(yintercept=0), lty=2) + 
+  geom_vline(aes(xintercept=0), lty=2) + ylab("PC2") + xlab("PC1") + 
+  geom_segment(aes(x=0, y=0, xend=Comp.1, yend=Comp.2), arrow=arrow(), col="red") + 
+  geom_label(aes(x=Comp.1*1.1, y=Comp.2*1.1, label=rowname))
+
+occu_pca$loadings[1:6, 3:4] %>% as.data.frame %>% rownames_to_column %>% 
+ggplot() + geom_hline(aes(yintercept=0), lty=2) + 
+  geom_vline(aes(xintercept=0), lty=2) + ylab("PC4") + xlab("PC3") + 
+  geom_segment(aes(x=0, y=0, xend=Comp.3, yend=Comp.4), arrow=arrow(), col="red") + 
+  geom_label(aes(x=Comp.3*1.1, y=Comp.4*1.1, label=rowname))
+
 ```
 
-Discussions of PCA here. 
+  Since all of the variables in the dataset are numerical, I performed PCA on all of the variables. PC1 accounted for 82% of the total variance, and PC1 and PC2 accounted for 94% of the total variance. However, I retained PC1, PC2, PC3, and PC4 for analysis because the graph flattens out right at PC4, and the percentage of variance for PC3 was four times the value of PC4. PC1 seems to index all of the variables in general, for the scores are all around 0.4. PC2 seems to focus on humidity, for the score for humidity is around 0.5. PC3 clearly focuses on temperature, for the score is 0.8 while the scores for other variables are negative. Lastly, PC4 focuses on humidity and light, while it loads very negatively for CO2. Considering the four principal components, I plotted several graphs for further analysis. The graph between PC1 and PC2 indicates that neither PC1 nor PC2 is very good at predicting occupancy by themselves. However, when they are plotted against one another, we can see the clear division between occupied and not occupied. 
 
 ###  Linear Classifier
 
 ```{R}
-# linear classifier code here
+fit <- lm(occupancy$Occupancy ~ occupancy$Temperature + occupancy$Humidity + occupancy$Light + occupancy$CO2 + occupancy$HumidityRatio)
+score <- predict(fit)
+class_diag(score, truth=occupancy$Occupancy, positive=1)
+pred <- factor(score>0.5,levels=c("TRUE","FALSE"))
+table(actual=occupancy$Occupancy, predicted=pred) %>% addmargins
+
+
 ```
 
 ```{R}
-# cross-validation of linear classifier here
+#K-fold
+
+k=10 #choose number of folds
+data<-occupancy[sample(nrow(occupancy)),] #randomly order rows
+folds<-cut(seq(1:nrow(occupancy)),breaks=k,labels=F) #create folds
+diags<-NULL
+for(i in 1:k){
+  ## Create training and test sets
+  train<-data[folds!=i,] 
+  test<-data[folds==i,]
+  truth<-test$Occupancy ## Truth labels for fold i
+  ## Train model on training set (all but fold i)
+  fit<-lm(Occupancy~.,data=train,family="binomial")
+  ## Test model on test set (fold i) 
+  probs<-predict(fit,newdata = test,type="response")
+  ## Get diagnostics for fold i
+  diags<-rbind(diags,class_diag(probs,truth, positive=1))
+  summarize_all(diags,mean)
+}
+diags
+summarize_all(diags,mean)
 ```
 
-Discussion here
+Here, I applied the linear regression model to predict whether a room is oppupied or not. The occupancy was predicted based on all of the other variables, since they are all numeric. With the linear model, the accuracy turned out to be 97.9%, and the AUC value was 0.9924. Based on these values, the linear classifier is a great predictor for this binary classification. Derived from the confusion matrix, the sensitivity for the model is 0.9979, and the specificity is 0.9681. Next we performed k-fold cross validation on the model to make sure the model was not overfitting. Upon analysis, the average accuracy for the test dataset was 97.899%, and the AUC value was 0.99232. This means that the model is not overfitting because the accuracy and the AUC value are both comparable to the values obtained from the previous analysis involving the entire dataset. 
 
 ### Non-Parametric Classifier
 
 ```{R}
 library(caret)
-# non-parametric classifier code here
+
+knn_fit <- knn3(Occupancy ~ Temperature + Humidity + Light + CO2 + HumidityRatio, data=occupancy)
+
+predict(knn_fit, occupancy) -> prob_knn
+
+class_diag(prob_knn[,2], occupancy$Occupancy, positive=1)
 ```
 
 ```{R}
-# cross-validation of np classifier here
+k=10
+
+data<-sample_frac(occupancy) #randomly order rows
+folds <- rep(1:k, length.out=nrow(data)) #create folds
+
+diags<-NULL
+
+i=1
+for(i in 1:k){
+# create training and test sets
+train<-data[folds!=i,] 
+test<-data[folds==i,] 
+truth<-test$Occupancy
+
+# train model
+fit <- knn3(Occupancy ~ Temperature + Humidity + Light + CO2 + HumidityRatio, data=train)
+
+# test model
+probs <- predict(fit, test)
+
+# get performance metrics for each fold
+diags<-rbind(diags,class_diag(probs[,2],truth, positive=1)) }
+
+#average performance metrics across all folds
+diags
+summarize_all(diags,mean)
 ```
 
-Discussion
+Next, I applied k-nearest neighbors algorithm, which is a non-parametric classifier, to the dataset for prediction. Again, occupancy was predicted using all other variables, and the accuracy and the AUC value came out to be 98.87% and 0.9996, respectively. Based on these values, the model predicts occupancy very well, even better than the linear model. For  further analysis of the model, I performed a k-fold cross validation on the knn model. The accuracy that I obtained in the test dataset was 98.536%, and the AUC value came out to be 0.99657. Similar to the linear model, the knn model does not seem to be overfitting because the accuracy and the AUC values obtained in the cross validation are comparable to the ones obtained usin the entire dataset. The knn model performed better than the linear model both with the entire dataset as well as the cross validation.
 
 
 ### Regression/Numeric Prediction
 
 ```{R}
-# regression model code here
+fit <- lm(Temperature~., data=occupancy)
+yhat <- predict(fit)
+mean((occupancy$Temperature-yhat)^2) # MSE
 ```
 
 ```{R}
-# cross-validation of regression model here
+set.seed(1234)
+k=5 #choose number of folds
+data<-occupancy[sample(nrow(occupancy)),] #randomly order rows
+folds<-cut(seq(1:nrow(occupancy)),breaks=k,labels=F) #create folds
+diags<-NULL
+for(i in 1:k){
+  train<-data[folds!=i,]
+  test<-data[folds==i,]
+  ## Fit linear regression model to training set
+  fit<-lm(Temperature~.,data=train)
+  ## Get predictions/y-hats on test set (fold i)
+  yhat<-predict(fit,newdata=test)
+  ## Compute prediction error  (MSE) for fold i
+  diags<-mean((test$Temperature-yhat)^2) 
+}
+mean(diags)
 ```
 
-Discussion
+I performed prediction on the temperature variable this time using the linear regression model. The value of temperature was predicted using the other variables in the dataset. Using the entire dataset, the mean squared error(MSE) that I derived was 0.006377, which is very low. This can be attributed to the fact that the temperature values do not vary in value on a large scale. To analyze whether the model was overfitting, I performed k-fold cross validation. The MSE on the cross validation was 0.006646, which does not show signs of overfitting, for the value is close to the one obtained using the entire dataset.
 
 ### Python 
 
 ```{R}
 library(reticulate)
+maximum <- max(occupancy$Humidity)
+
 ```
 
 ```{python}
-# python code here
+minimum = min(r.occupancy['Humidity'])
 ```
 
-Discussion
+```{R}
+c(py$minimum, maximum)
+
+```
+
+In this section, I demonstrate how the library 'reticulate' can be used to communicate information between R and Python. In the first code chunk (in R), I calculated for the maximum value in the humidity variable of the occupancy dataset. Next, in the second code chunk (in Python), I transferred the R dataset to Python using "r.occupancy" and calculated for the maximum value in the humidity variable. Lastly, in the last code chunk (in R), I transferred the minimum value information from Python to R using "py$minimum" and printed the minimum value and the maximum value of humidity in the dataset.
 
 ### Concluding Remarks
 
-Include concluding remarks here, if any
+In this project, I explored several prediction models for binary classification and for value prediction. For each model that I used, I performed cross validation to make sure the model was not overfitting. All of the models that were used performed great on the dataset, which was an exciting discovery because this means that whether the room is occupied can be classified using data such as temperature, humidity, CO2, light, and humidity ratio. There are several applications that this idea could be used for. For example, in clothing stores, stores could implement a system where they would be able to tell whether a fitting room is occupied using the mentioned data, which could all be measured without great expense. If this system is implemented, the employees would not have to remember which rooms are occupied or not when offering fitting rooms to customers. 
 
 
 
